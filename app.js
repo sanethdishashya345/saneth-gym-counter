@@ -12,10 +12,10 @@ const number=(v,min,max)=>Math.min(max,Math.max(min,Math.floor(Number(v)||0)));
 for(const k of Object.keys(defaults)){
  const el=$(k); if(!el)continue;
  if(el.type==='checkbox')el.checked=!!config[k];else el.value=config[k];
- el.addEventListener('change',()=>{
-  config[k]=el.type==='checkbox'?el.checked:number(el.value,k==='sets'||k==='reps'||k==='repInterval'?1:0,k==='sets'||k==='reps'?9999:3600);
-  if(el.type!=='checkbox')el.value=config[k];
-  saveSettings(); if(k==='sets'||k==='reps')renderRepTargets();render();
+ el.addEventListener('input',()=>{
+  if(el.type==='checkbox')config[k]=el.checked;
+  else if(el.value!=='' && Number.isFinite(Number(el.value)))config[k]=number(el.value,k==='sets'||k==='reps'||k==='repInterval'?1:0,k==='sets'||k==='reps'?9999:3600);
+  saveSettings(); if(k==='sets')renderRepTargets();render();
  });
 }
 function saveSettings(){try{localStorage.setItem('sgc_settings',JSON.stringify(config))}catch{}}
@@ -37,9 +37,11 @@ function renderRepTargets(){
   label.textContent=`Set ${i+1}`;
   const input=document.createElement('input');input.type='number';input.min='1';input.max='9999';input.step='1';
   input.value=targetFor(config,i);input.setAttribute('aria-label',`Reps for set ${i+1}`);
-  input.addEventListener('change',()=>{
-   const val=number(input.value,1,9999);config.repTargets[i]=val;input.value=val;saveSettings();render();
+  input.addEventListener('input',()=>{
+   if(input.value==='')return;
+   const val=number(input.value,1,9999);config.repTargets[i]=val;saveSettings();render();
   });
+  input.addEventListener('change',()=>{const val=number(input.value,1,9999);config.repTargets[i]=val;input.value=val;saveSettings();render()});
   label.append(input);wrap.append(label);
  }
  $('targetsLimit').classList.toggle('hidden',count<=250);
@@ -138,7 +140,7 @@ function finishWorkout(){
 }
 function startWorkout(){
  if(!['ready','finished'].includes(phase))return;
- ++epoch;stopTimer();cancelVoice();active={...config};
+ ++epoch;stopTimer();cancelVoice();active={...config,repTargets:[...config.repTargets]};
  phase='ready';set=1;rep=0;total=0;completed=0;paused=false;pausedDuration=0;
  started=Date.now();ended=null;
  startPreparation();
@@ -173,6 +175,8 @@ function pauseWorkout(){
 function resetWorkout(){
  ++epoch;stopTimer();cancelVoice();active=null;phase='ready';set=1;rep=0;completed=0;total=0;
  started=null;ended=null;paused=false;pausedDuration=0;remainingMs=0;render();
+ $('status').textContent='WORKOUT RESET ✓';
+ $('hint').textContent='Workout counter reset. Saved settings and workout history are preserved. Press START for a new workout.';
 }
 function render(){
  const c=active||config,maximum=workoutMax(c);
@@ -209,10 +213,11 @@ document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{
  document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active',x===b));
  ['workout','settings','history'].forEach(id=>$(id).classList.toggle('hidden',id!==b.dataset.tab));
  if(b.dataset.tab==='history')renderHistory();
+ if(b.dataset.tab==='workout')render();
 });
 $('start').onclick=startWorkout;$('pause').onclick=pauseWorkout;
 $('reset').onclick=()=>{if(['ready','finished'].includes(phase)||confirm('Reset current workout? Unsaved progress will be lost.'))resetWorkout()};
 $('closeDetail').onclick=()=>$('detailPanel').classList.add('hidden');
 setInterval(updateClock,500);
-if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
+if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js?v=4').catch(()=>{});
 renderRepTargets();render();renderHistory();
