@@ -1,11 +1,13 @@
 'use strict';
 const $=id=>document.getElementById(id);
-const defaults={sets:3,reps:12,prep:5,rest:12,cooldown:3,cooldownOn:false,repInterval:3,voice:true};
+const defaults={sets:3,reps:12,prep:5,rest:12,cooldown:3,cooldownOn:false,repInterval:3,voice:true,customReps:false,repTargets:[]};
 let config={...defaults};
 try{config={...defaults,...JSON.parse(localStorage.getItem('sgc_settings')||'{}')}}catch{}
 // Earlier versions used "cooldown" for the manual +1 button. Automatic counting
 // now has its own independent rep pace; do not silently add old cooldown delays.
 if(!localStorage.getItem('sgc_auto_migrated')){config.cooldownOn=false;localStorage.setItem('sgc_auto_migrated','1')}
+if(!Array.isArray(config.repTargets))config.repTargets=[];
+config.customReps=!!config.customReps;
 const number=(v,min,max)=>Math.min(max,Math.max(min,Math.floor(Number(v)||0)));
 for(const k of Object.keys(defaults)){
  const el=$(k); if(!el)continue;
@@ -13,9 +15,40 @@ for(const k of Object.keys(defaults)){
  el.addEventListener('change',()=>{
   config[k]=el.type==='checkbox'?el.checked:number(el.value,k==='sets'||k==='reps'||k==='repInterval'?1:0,k==='sets'||k==='reps'?9999:3600);
   if(el.type!=='checkbox')el.value=config[k];
-  localStorage.setItem('sgc_settings',JSON.stringify(config));render();
+  saveSettings(); if(k==='sets'||k==='reps')renderRepTargets();render();
  });
 }
+function saveSettings(){try{localStorage.setItem('sgc_settings',JSON.stringify(config))}catch{}}
+function targetFor(c,index){
+ const custom=Array.isArray(c.repTargets)?c.repTargets:[];
+ return c.customReps?number(custom[index]??c.reps,1,9999):number(c.reps,1,9999);
+}
+function workoutMax(c){let sum=0;for(let i=0;i<c.sets;i++)sum+=targetFor(c,i);return sum}
+function renderRepTargets(){
+ const wrap=$('repTargets');wrap.replaceChildren();
+ $('targetMode').checked=!!config.customReps;
+ $('repTargetEditor').classList.toggle('hidden',!config.customReps);
+ $('standardRepHint').textContent=config.customReps?'Default for newly added sets; each set can override it.':'The same rep target is used for all sets.';
+ if(!config.customReps)return;
+ const count=number(config.sets,1,9999);
+ // Limit DOM rendering only, not the supported set count.
+ for(let i=0;i<Math.min(count,250);i++){
+  const label=document.createElement('label');label.className='field setTargetField';
+  label.textContent=`Set ${i+1}`;
+  const input=document.createElement('input');input.type='number';input.min='1';input.max='9999';input.step='1';
+  input.value=targetFor(config,i);input.setAttribute('aria-label',`Reps for set ${i+1}`);
+  input.addEventListener('change',()=>{
+   const val=number(input.value,1,9999);config.repTargets[i]=val;input.value=val;saveSettings();render();
+  });
+  label.append(input);wrap.append(label);
+ }
+ $('targetsLimit').classList.toggle('hidden',count<=250);
+}
+$('targetMode').addEventListener('change',e=>{
+ config.customReps=e.target.checked;
+ if(config.customReps){for(let i=0;i<Math.min(config.sets,250);i++)if(config.repTargets[i]==null)config.repTargets[i]=config.reps}
+ saveSettings();renderRepTargets();render();
+});
 let active=null,phase='ready',set=1,rep=0,completed=0,total=0;
 let started=null,ended=null,paused=false,pauseStarted=0,pausedDuration=0;
 let deadline=0,remainingMs=0,timer=null,epoch=0,stepEnd=null,stepName=null,lastShown=-1;
@@ -67,7 +100,7 @@ function nextAutomaticRep(){countDown(active.repInterval*1000,'repWait',countRep
 function countRep(){
  if(paused||!active||phase!=='repWait')return;
  rep+=1;total+=1;
- if(rep>=active.reps){completeSet();return}
+ if(rep>=targetFor(active,set-1)){completeSet();return}
  phase='repSpoken';render();const session=epoch;
  speak(String(rep)).then(()=>{
   if(session!==epoch||paused||phase!=='repSpoken')return;
@@ -142,8 +175,8 @@ function resetWorkout(){
  started=null;ended=null;paused=false;pausedDuration=0;remainingMs=0;render();
 }
 function render(){
- const c=active||config,maximum=c.sets*c.reps;
- $('repValue').textContent=rep;$('targetLabel').textContent=` / ${c.reps}`;
+ const c=active||config,maximum=workoutMax(c);
+ $('repValue').textContent=rep;$('targetLabel').textContent=` / ${targetFor(c,Math.min(set-1,c.sets-1))}`;
  $('setLabel').textContent=`SET ${Math.min(set,c.sets)} / ${c.sets}`;
  $('phaseLabel').textContent=paused?'PAUSED':phase.toUpperCase();
  $('completed').textContent=completed;$('remaining').textContent=Math.max(0,c.sets-completed);$('totalReps').textContent=total;
@@ -157,7 +190,7 @@ function render(){
  $('autoIndicator').textContent=phase==='repWait'?'NEXT REP AUTOMATICALLY':phase==='finished'?'✓ FINISHED':paused?'PAUSED':phase==='ready'?'AUTO COUNT READY':'HANDS-FREE MODE';
  $('hint').textContent=phase==='repWait'?'No tapping needed. The next rep counts automatically.':phase==='finished'?`Well done! ${total} reps across ${completed} sets.`:phase==='ready'?'Press START. Reps count automatically after preparation.':phase==='rest'?'The next set starts automatically.':phase==='prep'?'Wait for the START voice announcement.':phase==='cooldown'?'Extra rest before the next rep.':'Keep training — no +1 tapping required.';
  $('setDots').replaceChildren(...Array.from({length:Math.min(c.sets,150)},(_,i)=>{
-  const d=document.createElement('span');d.className='set'+(i<completed?' done':i===set-1?' current':'');d.textContent=(i<completed?'✓ ':'')+(i+1);return d;
+  const d=document.createElement('span');d.className='set'+(i<completed?' done':i===set-1?' current':'');d.textContent=(i<completed?'✓ ':'')+(i+1)+' · '+targetFor(c,i);return d;
  }));
  updateClock();
 }
@@ -169,7 +202,7 @@ function renderHistory(){
   const b=document.createElement('button');b.className='historyItem';
   b.textContent=`${new Date(w.date).toLocaleString()}  •  ${w.sets} sets  •  ${w.reps} reps`;
   b.onclick=()=>{$('detailPanel').classList.remove('hidden');$('detail').textContent=
-  `Date: ${new Date(w.date).toLocaleDateString()}\nStart: ${new Date(w.date).toLocaleTimeString()}\nCompleted sets: ${w.sets}\nTotal reps: ${w.reps}\nDuration: ${duration(w.duration)}\nRep target: ${w.config.reps}\nSelected sets: ${w.config.sets}\nAuto rep interval: ${w.config.repInterval??'N/A'}s\nExtra rep rest: ${w.config.cooldownOn?w.config.cooldown+'s':'OFF'}\nRest: ${w.config.rest}s\nPreparation: ${w.config.prep}s`};list.append(b);
+  `Date: ${new Date(w.date).toLocaleDateString()}\nStart: ${new Date(w.date).toLocaleTimeString()}\nCompleted sets: ${w.sets}\nTotal reps: ${w.reps}\nDuration: ${duration(w.duration)}\nRep targets: ${w.config?.customReps?Array.from({length:w.config.sets},(_,i)=>targetFor(w.config,i)).join(' / '):w.config?.reps}\nSelected sets: ${w.config.sets}\nAuto rep interval: ${w.config.repInterval??'N/A'}s\nExtra rep rest: ${w.config.cooldownOn?w.config.cooldown+'s':'OFF'}\nRest: ${w.config.rest}s\nPreparation: ${w.config.prep}s`};list.append(b);
  });
 }
 document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{
@@ -182,4 +215,4 @@ $('reset').onclick=()=>{if(['ready','finished'].includes(phase)||confirm('Reset 
 $('closeDetail').onclick=()=>$('detailPanel').classList.add('hidden');
 setInterval(updateClock,500);
 if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
-render();renderHistory();
+renderRepTargets();render();renderHistory();
